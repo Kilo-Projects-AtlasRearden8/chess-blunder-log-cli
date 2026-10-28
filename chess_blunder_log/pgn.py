@@ -9,33 +9,45 @@ import chess
 import chess.pgn
 
 
-def parse_pgn_snippet(snippet: str) -> tuple[str, list[str]]:
-    """Parse a PGN snippet into a FEN and a list of SAN moves.
+def parse_pgn_moves(snippet: str) -> list[str]:
+    """Parse a PGN snippet into a list of SAN moves.
 
-    Returns (fen, moves). If the snippet cannot be parsed, returns
-    the starting position FEN and an empty move list.
+    Falls back to regex move extraction when the snippet is not a valid PGN
+    stream. Returns an empty list for empty/invalid input.
     """
     if not snippet or not snippet.strip():
-        return chess.Board().fen(), []
+        return []
 
     game = chess.pgn.read_game(io.StringIO(snippet))
-    if game is None:
-        # Try to extract raw move text between 1. and the end.
-        moves = _extract_raw_moves(snippet)
-        board = chess.Board()
-        san_moves: list[str] = []
-        for san in moves:
-            try:
-                move = board.parse_san(san)
-                san_moves.append(board.san(move))
-                board.push(move)
-            except ValueError:
-                break
-        return board.fen(), san_moves
+    if game is not None:
+        return [node.san() for node in game.mainline() if node.san()]
 
-    board = game.end().board()
-    san_moves = [node.san() for node in game.mainline() if node.san()]
-    return board.fen(), san_moves
+    moves: list[str] = []
+    board = chess.Board()
+    for san in _extract_raw_moves(snippet):
+        try:
+            move = board.parse_san(san)
+        except ValueError:
+            continue
+        moves.append(board.san(move))
+        board.push(move)
+    return moves
+
+
+def position_and_move_from_pgn(snippet: str) -> tuple[str, str]:
+    """Return ``(fen, move)`` for the last move in a PGN snippet.
+
+    The FEN describes the position *before* the final move (the blunder
+    position), and ``move`` is that final move in canonical SAN. Raises
+    ``ValueError`` when the snippet contains no moves.
+    """
+    moves = parse_pgn_moves(snippet)
+    if not moves:
+        raise ValueError("PGN snippet contains no moves")
+    board = chess.Board()
+    for san in moves[:-1]:
+        board.push_san(san)
+    return board.fen(), board.san(board.parse_san(moves[-1]))
 
 
 def _extract_raw_moves(snippet: str) -> list[str]:
